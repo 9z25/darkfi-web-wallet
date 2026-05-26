@@ -1,0 +1,15 @@
+{
+  "name": "darkfi_wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "darkfi_wasm_bg.wasm",
+    "darkfi_wasm.js",
+    "darkfi_wasm.d.ts"
+  ],
+  "main": "darkfi_wasm.js",
+  "types": "darkfi_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
