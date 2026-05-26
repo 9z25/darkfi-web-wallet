@@ -1,0 +1,511 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DarkFi Web Wallet</title>
+  <style>
+    body { font-family: Arial; max-width: 850px; margin: 30px auto; background:#0b0b10; color:#eee; }
+    button,input { padding:12px; margin:6px 0; width:100%; box-sizing:border-box; border-radius:10px; }
+    button { background:#6d5dfc; color:white; border:0; cursor:pointer; font-weight:bold; }
+    input { background:#151520; color:white; border:1px solid #333; }
+    .card { background:#151520; padding:18px; border-radius:16px; margin:14px 0; }
+    pre { background:#050508; padding:16px; border-radius:12px; overflow:auto; white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+
+<h1>DarkFi Web Wallet</h1>
+
+<div class="card">
+  <h2>Wallet</h2>
+  <input id="secretKey" placeholder="DarkFi secret key" />
+  <button onclick="saveSecret()">Save Secret Key</button>
+  <button onclick="loadSecret()">Load Secret Key</button>
+</div>
+
+<div class="card">
+  <h2>Indexer</h2>
+  <button onclick="syncIndexer()">Sync Indexer</button>
+  <button onclick="indexStatus()">Indexer Status</button>
+</div>
+
+<div class="card">
+  <h2>Wallet Scan</h2>
+  <button onclick="scanWallet()">Scan Wallet Balance</button>
+</div>
+
+<div class="card">
+  <h2>Balance</h2>
+  <pre id="balanceBox">No balance yet</pre>
+</div>
+
+<div class="card">
+  <h2>Transfer</h2>
+  <input id="recipient" placeholder="Recipient address" />
+  <input id="amount" placeholder="Amount in atomic units" type="number" min="1" />
+  <input id="fee" placeholder="Estimated fee in atomic units" readonly />
+  <button onclick="buildTransferWithFee()">Build Transfer + Fee Locally</button>
+  <button onclick="broadcastBuiltTx()">Broadcast Built Transaction</button>
+</div>
+
+<div class="card">
+  <h2>Output</h2>
+  <pre id="out">Ready</pre>
+</div>
+
+<script type="module">
+import init, {
+  build_transfer,
+  build_transfer_with_fee,
+  try_decrypt_raw_note
+} from "./pkg/darkfi_wasm.js";
+
+await init();
+
+const BRIDGE = "http://127.0.0.1:8789";
+const SECRET_KEY_NAME = "darkfi_secret_key";
+const STATE_KEY_NAME = "darkfi_wallet_state";
+const BUILT_TX_KEY_NAME = "darkfi_built_tx_base64";
+const FEELESS_TX_KEY_NAME = "darkfi_fee_less_tx_base64";
+
+const out = document.getElementById("out");
+const balanceBox = document.getElementById("balanceBox");
+
+function show(x) {
+  out.textContent = JSON.stringify(x, null, 2);
+}
+
+function showBalance(x) {
+  balanceBox.textContent = JSON.stringify(x, null, 2);
+}
+
+window.saveSecret = function () {
+  const secret = document.getElementById("secretKey").value.trim();
+
+  if (!secret) {
+    show({ ok:false, error:"Missing secret key" });
+    return;
+  }
+
+  localStorage.setItem(SECRET_KEY_NAME, secret);
+
+  show({
+    ok:true,
+    saved:true
+  });
+};
+
+window.loadSecret = function () {
+  const secret = localStorage.getItem(SECRET_KEY_NAME) || "";
+
+  document.getElementById("secretKey").value = secret;
+
+  show({
+    ok: !!secret,
+    loaded: !!secret
+  });
+};
+
+async function getJson(url) {
+  const r = await fetch(url);
+  return await r.json();
+}
+
+async function postJson(url, body = {}) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  return await r.json();
+}
+
+async function getBytes(url) {
+  const r = await fetch(url);
+
+  if (!r.ok) {
+    throw new Error(`Fetch failed ${url}: ${r.status}`);
+  }
+
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+function loadState() {
+  const raw = localStorage.getItem(STATE_KEY_NAME);
+
+  if (!raw) {
+    return null;
+  }
+
+  return JSON.parse(raw);
+}
+
+async function ensureFreshWalletState() {
+  const [latest, status] = await Promise.all([
+    getJson(`${BRIDGE}/api/last-block`),
+    getJson(`${BRIDGE}/api/index/status`)
+  ]);
+
+  if (!latest.ok || !status.ok) {
+    throw new Error("Could not check indexer freshness");
+  }
+
+  if (Number(status.last_scanned_height) < Number(latest.height)) {
+    show({
+      syncing:true,
+      stage:"indexer behind, syncing before build",
+      indexed_height: status.last_scanned_height,
+      node_height: latest.height
+    });
+
+    const sync = await postJson(`${BRIDGE}/api/index/sync`);
+
+    if (!sync.ok) {
+      throw new Error(sync.error || "Indexer sync failed");
+    }
+
+    await scanWallet();
+  }
+
+  return loadState();
+}
+
+function parsePositiveBigInt(id) {
+  const value = document.getElementById(id).value.trim();
+
+  if (!/^[0-9]+$/.test(value) || BigInt(value) <= 0n) {
+    throw new Error(`${id} must be a positive integer in atomic units`);
+  }
+
+  return BigInt(value);
+}
+
+function chooseTransferCoin(spendableCoins, amount) {
+  return spendableCoins.find(coin =>
+    BigInt(coin.decrypt?.value || 0) >= amount
+  );
+}
+
+function normalizeNullifier(value) {
+  return String(value || "")
+    .replace(/^Nullifier\(/, "")
+    .replace(/\)$/, "")
+    .trim()
+    .toLowerCase();
+}
+
+function chooseFeeCoin(spendableCoins, transferCoin, fee) {
+  const transferNullifier = normalizeNullifier(transferCoin.decrypt?.nullifier);
+
+  return spendableCoins.find(coin =>
+    normalizeNullifier(coin.decrypt?.nullifier) !== transferNullifier &&
+    BigInt(coin.decrypt?.value || 0) > fee
+  );
+}
+
+async function refreshWitness(coin) {
+  const witness = await postJson(`${BRIDGE}/api/index/witness`, {
+    coin: coin.coin
+  });
+
+  if (!witness.ok) {
+    throw new Error(witness.error || `Witness refresh failed for leaf ${coin.leaf_position}`);
+  }
+
+  return {
+    ...coin,
+    leaf_position: witness.leaf_position,
+    witness
+  };
+}
+
+window.syncIndexer = async function () {
+  show({ syncing:true });
+
+  const result = await postJson(`${BRIDGE}/api/index/sync`);
+
+  show(result);
+};
+
+window.indexStatus = async function () {
+  const result = await getJson(`${BRIDGE}/api/index/status`);
+  show(result);
+};
+
+window.scanWallet = async function () {
+  const secret = localStorage.getItem(SECRET_KEY_NAME);
+
+  if (!secret) {
+    show({ ok:false, error:"Save secret key first" });
+    return;
+  }
+
+  show({ scanning:true });
+
+  const notesResult = await getJson(`${BRIDGE}/api/index/notes`);
+  const nullifiersResult = await getJson(`${BRIDGE}/api/index/nullifiers`);
+
+  if (!notesResult.ok) {
+    show(notesResult);
+    return;
+  }
+
+  if (!nullifiersResult.ok) {
+    show(nullifiersResult);
+    return;
+  }
+
+  const spentSet = new Set(
+    (nullifiersResult.nullifiers || []).map(normalizeNullifier)
+  );
+
+  const ownedCoins = [];
+  const spendableCoins = [];
+  const spentCoins = [];
+  const balances = {};
+
+  for (const note of notesResult.notes || []) {
+    let decrypt;
+
+    try {
+      decrypt = try_decrypt_raw_note(
+        secret,
+        note.encrypted_note_hex,
+        note.coin
+      );
+    } catch (err) {
+      continue;
+    }
+
+    if (!decrypt || !decrypt.owned) {
+      continue;
+    }
+/*
+    const witness = await getJson(
+      `${BRIDGE}/api/index/witness/${note.leaf_position}`
+    );
+*/
+    const coin = {
+      height: note.height,
+      tx_hash: note.tx_hash,
+      tx_index: note.tx_index,
+      call_index: note.call_index,
+      leaf_position: note.leaf_position,
+      coin: note.coin,
+      encrypted_note_hex: note.encrypted_note_hex,
+      is_block_reward: !!note.is_block_reward,
+      owned: true,
+      decrypt,
+      //witness
+    };
+
+    ownedCoins.push(coin);
+
+    if (spentSet.has(normalizeNullifier(decrypt.nullifier))) {
+      spentCoins.push(coin);
+    } else {
+      spendableCoins.push(coin);
+
+      const token = decrypt.token_id;
+      const value = Number(decrypt.value || 0);
+
+      balances[token] = (balances[token] || 0) + value;
+    }
+  }
+
+  const state = {
+    ok: true,
+    owned_count: ownedCoins.length,
+    spendable_count: spendableCoins.length,
+    spent_count: spentCoins.length,
+    balances,
+    ownedCoins,
+    spendableCoins,
+    spentCoins,
+    updated_at: new Date().toISOString()
+  };
+
+  localStorage.setItem(
+    STATE_KEY_NAME,
+    JSON.stringify(state)
+  );
+
+  show(state);
+  showBalance({
+    ok:true,
+    balances,
+    spendable_count: spendableCoins.length
+  });
+};
+
+window.buildTransferWithFee = async function () {
+  try {
+    const secret = localStorage.getItem(SECRET_KEY_NAME);
+
+    if (!secret) {
+      show({ ok:false, error:"Save secret key first" });
+      return;
+    }
+
+    const state = await ensureFreshWalletState();
+
+    if (!state?.spendableCoins?.length) {
+      show({ ok:false, error:"Scan wallet first" });
+      return;
+    }
+
+    const recipient = document.getElementById("recipient").value.trim();
+    const amount = parsePositiveBigInt("amount");
+
+    if (!recipient) {
+      show({ ok:false, error:"Missing recipient" });
+      return;
+    }
+
+    let transferCoin = chooseTransferCoin(state.spendableCoins, amount);
+
+    if (!transferCoin) {
+      show({ ok:false, error:"No spendable coin large enough for amount" });
+      return;
+    }
+
+    show({
+      building:true,
+      stage:"building fee-less transfer",
+      transfer_leaf: transferCoin.leaf_position
+    });
+
+    transferCoin = await refreshWitness(transferCoin);
+
+    const [mintZkbin, burnZkbin] = await Promise.all([
+      getBytes(`${BRIDGE}/api/zkas/money/mint`),
+      getBytes(`${BRIDGE}/api/zkas/money/burn`)
+    ]);
+
+    const feeLessRaw = build_transfer(
+      secret,
+      JSON.stringify(transferCoin),
+      recipient,
+      amount,
+      mintZkbin,
+      burnZkbin
+    );
+
+    const feeLess = JSON.parse(feeLessRaw);
+
+    if (!feeLess.ok || !feeLess.tx_base64) {
+      show({
+        ...feeLess,
+        stage:"fee-less transfer build failed"
+      });
+      return;
+    }
+
+    localStorage.setItem(FEELESS_TX_KEY_NAME, feeLess.tx_base64);
+
+    show({
+      estimating_fee:true,
+      transfer_leaf: transferCoin.leaf_position,
+      fee_less_debug: feeLess.debug
+    });
+
+    const estimate = await postJson(`${BRIDGE}/api/estimate-fee`, {
+      tx_base64: feeLess.tx_base64
+    });
+
+    if (!estimate.ok || estimate.required_fee == null) {
+      show({
+        ...estimate,
+        stage: "fee estimate failed",
+        transfer_leaf: transferCoin.leaf_position,
+        fee_less_debug: feeLess.debug,
+        fee_less_tx_base64: feeLess.tx_base64
+      });
+      return;
+    }
+
+    const fee = BigInt(estimate.required_fee);
+    document.getElementById("fee").value = String(fee);
+
+    let feeCoin = chooseFeeCoin(state.spendableCoins, transferCoin, fee);
+    let transferCoinValue = BigInt(transferCoin.decrypt?.value || 0);
+    let useTransferChangeForFee = !feeCoin && transferCoinValue > amount + fee;
+
+    if (!feeCoin && !useTransferChangeForFee) {
+      show({
+        ok:false,
+        error:"No separate spendable fee coin large enough for estimated fee, and transfer coin has insufficient change to pay fee",
+        estimate
+      });
+      return;
+    }
+
+    feeCoin = useTransferChangeForFee
+      ? transferCoin
+      : await refreshWitness(feeCoin);
+
+    show({
+      building:true,
+      stage:"building transfer with fee",
+      transfer_leaf: transferCoin.leaf_position,
+      fee_leaf: feeCoin.leaf_position,
+      fee_source: useTransferChangeForFee ? "transfer_change_tx_local" : "separate_coin",
+      estimate
+    });
+
+    const feeZkbin = await getBytes(`${BRIDGE}/api/zkas/money/fee`);
+
+    const builtRaw = build_transfer_with_fee(
+      secret,
+      JSON.stringify(transferCoin),
+      JSON.stringify(feeCoin),
+      recipient,
+      amount,
+      fee,
+      mintZkbin,
+      burnZkbin,
+      feeZkbin
+    );
+
+    const built = JSON.parse(builtRaw);
+
+    if (built.ok && built.tx_base64) {
+      localStorage.setItem(BUILT_TX_KEY_NAME, built.tx_base64);
+    }
+
+    show({
+      ...built,
+      transfer_leaf: transferCoin.leaf_position,
+      fee_leaf: feeCoin.leaf_position
+    });
+  } catch (err) {
+    show({ ok:false, error:String(err) });
+  }
+};
+
+window.broadcastBuiltTx = async function () {
+  const txBase64 = localStorage.getItem(BUILT_TX_KEY_NAME);
+
+  if (!txBase64) {
+    show({ ok:false, error:"Build a transaction first" });
+    return;
+  }
+
+  const result = await postJson(`${BRIDGE}/api/broadcast`, {
+    tx_base64: txBase64
+  });
+
+  show(result);
+
+  if (result.ok) {
+  await syncIndexer();
+  await scanWallet();
+}
+};
+
+window.loadSecret();
+</script>
+
+</body>
+</html>

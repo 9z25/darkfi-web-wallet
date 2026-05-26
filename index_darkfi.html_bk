@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Freshmint Claim Envelope Wallet</title>
+    <style>
+    body {
+        font-family: Arial, sans-serif;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        background: linear-gradient(180deg, lightblue 0%, #b8ddff 100%);
+        color: #16324f;
+    }
+
+    h1 {
+        color: #16324f;
+        text-align: center;
+    }
+
+    input, button {
+        display: inline;
+        margin: 10px 0;
+        padding: 7px;
+        border-radius: 6px;
+        border: 1px solid #5f8fa8;
+    }
+
+    button {
+        background-color: #ffb6a3;
+        color: #16324f;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    button:hover {
+        background-color: #ff9f87;
+    }
+
+    #qrcode {
+        background: white;
+        display: inline-block;
+        padding: 10px;
+        border: 2px solid #5f8fa8;
+        border-radius: 8px;
+    }
+
+    .qr-info {
+        margin: 10px 0 20px;
+        padding: 10px;
+        background-color: #dff6ff;
+        border: 1px solid #5f8fa8;
+        border-radius: 8px;
+        word-break: break-all;
+    }
+
+    .qr-info span {
+        font-weight: bold;
+        color: #8b3a2f;
+    }
+
+    #output {
+        margin-top: 20px;
+        border: 1px solid #5f8fa8;
+        padding: 10px;
+        min-height: 100px;
+        overflow: scroll;
+        background-color: #ffe0d6;
+        border-radius: 8px;
+    }
+
+    .claim-env {
+        display: inline-block;
+        padding: 8px;
+        background-color: #dff6ff;
+        border: 1px solid #5f8fa8;
+        border-radius: 8px;
+        margin-top: 10px;
+    }
+
+    .claim-link {
+        color: #005fa3;
+        cursor: pointer;
+        font-weight: bold;
+    }
+    #address {
+        display:none;
+    }
+    #balance {
+        display:none;
+    }
+
+
+
+.nav-btn,
+.invoice-btn {
+    text-decoration: none;
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-weight: bold;
+    transition: 0.2s ease;
+    display: inline-block;
+}
+.nav-btn {
+    background-color: #dff6ff;
+    border: 1px solid #5f8fa8;
+    color: #16324f;
+}
+
+.nav-btn:hover {
+    background-color: #c8ecff;
+}
+
+.invoice-btn {
+    background-color: #ffb6a3;
+    border: 1px solid #d98974;
+    color: #16324f;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+
+.invoice-btn:hover {
+    background-color: #ff9f87;
+    transform: translateY(-1px);
+}
+
+.token-toggle {
+    display: inline-flex;
+    border: 1px solid rgba(95, 143, 168, 0.8);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 10px auto 20px;
+    width: fit-content;
+    background: rgba(255,255,255,0.5);
+    backdrop-filter: blur(8px);
+}
+
+.token-option {
+    padding: 6px 12px;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: #16324f;
+
+    border-right: 1px solid rgba(95, 143, 168, 0.4);
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.token-option:last-child {
+    border-right: none;
+}
+
+.token-option:hover {
+    background: rgba(255, 182, 163, 0.4);
+}
+
+.token-option.active {
+    background: #ffb6a3;
+    color: #16324f;
+}
+.token-option {
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
+
+.top-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 18px;
+    justify-content: center;
+}
+
+#scan-target {
+    position:absolute;
+    top:50%;
+    left:50%;
+    width:180px;
+    height:180px;
+    transform:translate(-50%, -50%);
+    border:3px solid #00ff99;
+    border-radius:12px;
+    box-shadow:
+        0 0 0 9999px rgba(0,0,0,0.25);
+    pointer-events:none;
+}
+
+/* Corner accents */
+#scan-target::before,
+#scan-target::after {
+    content:"";
+    position:absolute;
+    width:30px;
+    height:30px;
+    border-color:#00ff99;
+    border-style:solid;
+}
+
+#scan-target::before {
+    top:-3px;
+    left:-3px;
+    border-width:4px 0 0 4px;
+}
+
+#scan-target::after {
+    bottom:-3px;
+    right:-3px;
+    border-width:0 4px 4px 0;
+}
+
+#scan-target::marker {
+    display:none;
+}
+
+.scan-line {
+    position:absolute;
+    left:0;
+    width:100%;
+    height:2px;
+    background:#00ff99;
+    animation:scanMove 2s linear infinite;
+}
+
+@keyframes scanMove {
+    0% {
+        top:0;
+    }
+    50% {
+        top:calc(100% - 2px);
+    }
+    100% {
+        top:0;
+    }
+}
+
+</style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script> 
+</head>
+<body>
+
+<h1><img src="https://fmclaim.wasmer.app/images/mint.png" width="10%"/>Freshmint Bitcoin Cash Account</h1>
+
+<div id="qrcode"></div><br>
+<div class="token-toggle">
+    <a class="token-option" href="https://fmclaim.wasmer.app/">BCH</a>
+    <a class="token-option" href="https://fmclaim.wasmer.app/paryonusd.html">PUSD</a>
+    <a class="token-option" href="https://fmclaim.wasmer.app/moriausd.html">MUSD</a>
+    <a class="token-option active" href="https://fmclaim.wasmer.app/">DRK</a>
+</div><br>
+
+<div class="top-actions">
+    <a class="invoice-btn" href="./invoice-generator.html">📄 Invoice Generator</a>
+    <a class="invoice-btn" href="./dex/index.html">🪙 DEX</a>
+   <a class="invoice-btn" id="scanQrBtn">📷 QR Code Reader</a>
+    <a class="invoice-btn" href="./chat/index.html">💬 Chat</a>
+</div>
+<div class="qr-info">
+    <div>Address: <span id="qr-address">Loading...</span></div>
+    <div>Amount: <span id="qr-amount">-.-- DRK</span></div>
+</div>
+
+<div id="reader-container" style="
+    position:relative;
+    width:300px;
+    margin-top:20px;
+    display:none;
+">
+    <div id="reader"></div>
+
+    <!-- Scan Target -->
+    <div id="scan-target"><div class="scan-line"></div></div>
+</div>
+
+<input type="text" id="address" placeholder="Enter your BCH address" hidden>
+<input type="text" id="balance" hidden>
+<label for="secretKey">Secret Key:</label>
+<input type="text" id="secretKey" placeholder="Load mnemonic here...">
+<button id="checkBalance" onclick="scanWallet()">Scan Balance</button>
+<button id="sendTokens" onclick="buildTransferWithFee()">Send Darkfi</button><br>
+
+<div id="out" hidden></div>
+<div id="output"></div>
+
+<input id="fee" placeholder="Estimated fee in atomic units" type="hidden">
+
+<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+<script>eruda.init();</script>
+<script type="module">
+import init, {
+  build_transfer,
+  build_transfer_with_fee,
+  try_decrypt_raw_note,
+  create_wallet,
+  import_wallet,
+} from "./pkg/darkfi_wasm.js";
+
+await init();
+
+const LAST_NOTE_ID_KEY = "darkfi_last_note_id";
+const WALLET_SCAN_CURSOR = "darkfi_wallet_last_note_id";
+const BRIDGE = "http://192.168.1.49:8789";
+const SECRET_KEY_NAME = "darkfi_secret_key";
+const STATE_KEY_NAME = "darkfi_wallet_state";
+const BUILT_TX_KEY_NAME = "darkfi_built_tx_base64";
+const FEELESS_TX_KEY_NAME = "darkfi_fee_less_tx_base64";
+let transferWorker = null;
+let transferWorkerCallId = 0;
+
+const out = document.getElementById("out");
+const output1 = document.getElementById("output");
+const balanceBox = document.getElementById("balanceBox");
+
+function renderQr(address) {
+  const qrcodeDiv = document.getElementById("qrcode");
+
+  qrcodeDiv.innerHTML = "";
+
+  new QRCode(qrcodeDiv, {
+    text: address,
+    width: 180,
+    height: 180
+  });
+}
+
+function show(x) {
+  output1.textContent = JSON.stringify(x, null, 2);
+}
+
+function showOutput(x) {
+  output1.textContent = JSON.stringify(x, null, 2);
+}
+
+function showBalance(x) {
+  balanceBox.textContent = JSON.stringify(x, null, 2);
+}
+
+window.saveSecret = function () {
+  const secret = document.getElementById("secretKey").value.trim();
+
+  if (!secret) {
+    show({ ok:false, error:"Missing secret key" });
+    return;
+  }
+
+  localStorage.setItem(SECRET_KEY_NAME, secret);
+
+  show({
+    ok:true,
+    saved:true
+  });
+};
+
+window.loadSecret = function () {
+  let secret = localStorage.getItem(SECRET_KEY_NAME) || "";
+  let created = false;
+
+  const wallet = secret
+    ? import_wallet(secret)
+    : create_wallet();
+
+  if (!wallet || wallet.ok === false) {
+    show({
+      ok: false,
+      error: wallet?.error || "Wallet load/create failed"
+    });
+    return;
+  }
+
+  if (!secret) {
+    secret = wallet.secret_key;
+    localStorage.setItem(SECRET_KEY_NAME, secret);
+    created = true;
+  }
+
+document.getElementById("qr-address").textContent =
+  wallet.address;
+
+  renderQr(wallet.address);
+
+  document.getElementById("secretKey").value = secret;
+
+  show({
+    ok: true,
+    loaded: !created,
+    created,
+    saved: created
+  });
+
+
+};
+
+async function getJson(url) {
+  const r = await fetch(url);
+  return await r.json();
+}
+
+async function postJson(url, body = {}) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  return await r.json();
+}
+
+async function getBytes(url) {
+  const r = await fetch(url);
+
+  if (!r.ok) {
+    throw new Error(`Fetch failed ${url}: ${r.status}`);
+  }
+
+  return new Uint8Array(await r.arrayBuffer());
+}
+
+function showTransferError(err, stage) {
+  const payload = {
+    ok: false,
+    stage,
+    error: err?.stack || err?.message || String(err)
+  };
+
+  show(payload);
+  showOutput(payload);
+}
+
+function nextUiFrame() {
+  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+function getTransferWorker() {
+  if (!transferWorker) {
+    transferWorker = new Worker("./transfer-worker.js?v=2", { type: "module" });
+  }
+
+  return transferWorker;
+}
+
+function resetTransferWorker() {
+  if (transferWorker) {
+    transferWorker.terminate();
+    transferWorker = null;
+  }
+}
+
+function runTransferWorker(task, payload) {
+  const worker = getTransferWorker();
+  const id = ++transferWorkerCallId;
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+      resetTransferWorker();
+      reject(new Error(`${task} timed out in transfer worker after 180 seconds`));
+    }, 180000);
+
+    const onMessage = event => {
+      if (event.data?.id !== id) {
+        return;
+      }
+
+      clearTimeout(timeout);
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+
+      if (event.data.ok) {
+        resolve(event.data.result);
+      } else {
+        reject(new Error(event.data.error || "Transfer worker failed"));
+      }
+    };
+
+    const onError = event => {
+      clearTimeout(timeout);
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+      resetTransferWorker();
+      reject(new Error(event.message || "Transfer worker error"));
+    };
+
+    worker.addEventListener("message", onMessage);
+    worker.addEventListener("error", onError);
+    worker.postMessage({ id, task, payload });
+  });
+}
+
+async function runTransferWorkerWithHeartbeat(task, payload, status) {
+  let seconds = 0;
+  let done = false;
+
+  const timer = setInterval(() => {
+    if (done) {
+      return;
+    }
+
+    seconds += 1;
+    showOutput({
+      ...status,
+      worker: true,
+      elapsed_seconds: seconds
+    });
+  }, 1000);
+
+  try {
+    showOutput({
+      ...status,
+      worker: true,
+      elapsed_seconds: seconds
+    });
+
+    return await runTransferWorker(task, payload);
+  } finally {
+    done = true;
+    clearInterval(timer);
+  }
+}
+
+function loadState() {
+  const raw = localStorage.getItem(STATE_KEY_NAME);
+
+  if (!raw) {
+    return null;
+  }
+
+  return JSON.parse(raw);
+}
+
+async function ensureFreshWalletState() {
+  const [latest, status] = await Promise.all([
+    getJson(`${BRIDGE}/api/last-block`),
+    getJson(`${BRIDGE}/api/index/status`)
+  ]);
+
+  if (!latest.ok || !status.ok) {
+    throw new Error("Could not check indexer freshness");
+  }
+
+  if (Number(status.last_scanned_height) < Number(latest.height)) {
+    show({
+      syncing:true,
+      stage:"indexer behind, syncing before build",
+      indexed_height: status.last_scanned_height,
+      node_height: latest.height
+    });
+
+    const sync = await postJson(`${BRIDGE}/api/index/sync`);
+
+    if (!sync.ok) {
+      throw new Error(sync.error || "Indexer sync failed");
+    }
+
+    await scanWallet();
+  }
+
+  return loadState();
+}
+
+function parsePositiveBigInt(id) {
+  const value = document.getElementById(id).value.trim();
+
+  if (!/^[0-9]+$/.test(value) || BigInt(value) <= 0n) {
+    throw new Error(`${id} must be a positive integer in atomic units`);
+  }
+
+  return BigInt(value);
+}
+
+function chooseTransferCoin(spendableCoins, amount) {
+  return spendableCoins.find(coin =>
+    BigInt(coin.decrypt?.value || 0) >= amount
+  );
+}
+
+function normalizeNullifier(value) {
+  return String(value || "")
+    .replace(/^Nullifier\(/, "")
+    .replace(/\)$/, "")
+    .trim()
+    .toLowerCase();
+}
+
+function chooseFeeCoin(spendableCoins, transferCoin, fee) {
+  const transferNullifier = normalizeNullifier(transferCoin.decrypt?.nullifier);
+
+  return spendableCoins.find(coin =>
+    normalizeNullifier(coin.decrypt?.nullifier) !== transferNullifier &&
+    BigInt(coin.decrypt?.value || 0) > fee
+  );
+}
+
+async function refreshWitness(coin) {
+  const witness = await postJson(`${BRIDGE}/api/index/witness`, {
+    coin: coin.coin
+  });
+
+  if (!witness.ok) {
+    throw new Error(witness.error || `Witness refresh failed for leaf ${coin.leaf_position}`);
+  }
+
+  return {
+    ...coin,
+    leaf_position: witness.leaf_position,
+    witness
+  };
+}
+
+window.syncIndexer = async function () {
+  show({ syncing:true });
+
+  const result = await postJson(`${BRIDGE}/api/index/sync`);
+
+};
+
+window.indexStatus = async function () {
+  const result = await getJson(`${BRIDGE}/api/index/status`);
+  show(result);
+};
+
+window.scanWallet = async function () {
+  const secret = localStorage.getItem(SECRET_KEY_NAME);
+
+  if (!secret) {
+    show({ ok:false, error:"Save secret key first" });
+    return;
+  }
+
+  const oldState = loadState() || {
+    ownedCoins: [],
+    spendableCoins: [],
+    spentCoins: [],
+    balances: {}
+  };
+
+  const ownedCoins = [...oldState.ownedCoins];
+  const spendableCoins = [...oldState.spendableCoins];
+  const spentCoins = [...oldState.spentCoins];
+  const balances = { ...oldState.balances };
+
+  const lastId = Number(localStorage.getItem(LAST_NOTE_ID_KEY) || 0);
+
+  const notesResult = await getJson(
+    `${BRIDGE}/api/index/notes-since/${lastId}`
+  );
+
+  const nullifiersResult = await getJson(`${BRIDGE}/api/index/nullifiers`);
+
+  const spentSet = new Set(
+    (nullifiersResult.nullifiers || []).map(normalizeNullifier)
+  );
+
+  let maxId = lastId;
+
+  for (const note of notesResult.notes || []) {
+    maxId = Math.max(maxId, Number(note.id || 0));
+
+    let decrypt;
+    try {
+      decrypt = try_decrypt_raw_note(
+        secret,
+        note.encrypted_note_hex,
+        note.coin
+      );
+    } catch {
+      continue;
+    }
+
+    if (!decrypt?.owned) continue;
+
+    const coin = {
+      id: note.id,
+      height: note.height,
+      tx_hash: note.tx_hash,
+      tx_index: note.tx_index,
+      call_index: note.call_index,
+      leaf_position: note.leaf_position,
+      coin: note.coin,
+      encrypted_note_hex: note.encrypted_note_hex,
+      is_block_reward: !!note.is_block_reward,
+      owned: true,
+      decrypt
+    };
+
+    ownedCoins.push(coin);
+
+    if (spentSet.has(normalizeNullifier(decrypt.nullifier))) {
+      spentCoins.push(coin);
+    } else {
+      spendableCoins.push(coin);
+
+      const token = decrypt.token_id;
+      balances[token] = (balances[token] || 0) + Number(decrypt.value || 0);
+    }
+  }
+
+  localStorage.setItem(LAST_NOTE_ID_KEY, String(maxId));
+
+  const state = {
+    ok: true,
+    owned_count: ownedCoins.length,
+    spendable_count: spendableCoins.length,
+    spent_count: spentCoins.length,
+    balances,
+    ownedCoins,
+    spendableCoins,
+    spentCoins,
+    updated_at: new Date().toISOString()
+  };
+
+  localStorage.setItem(STATE_KEY_NAME, JSON.stringify(state));
+
+  //show(state);
+
+  const darkTokenId = "TokenId(0x267f9b7c64549bf080307d045bd0bd7ae4389093f6b2896114ec4e523a77a10f)";
+  const bal = Number(balances[darkTokenId] || 0);
+    document.getElementById("qr-amount").textContent = (bal / 100000000).toFixed(8) + " DRK";
+
+};
+
+
+
+window.buildTransferWithFee = async function () {
+  try {
+    const secret = localStorage.getItem(SECRET_KEY_NAME);
+
+    if (!secret) {
+      show({ ok:false, error:"Save secret key first" });
+      return;
+    }
+console.time("1 ensureFreshWalletState");
+    const state = await ensureFreshWalletState();
+console.timeEnd("1 ensureFreshWalletState");
+    if (!state?.spendableCoins?.length) {
+      show({ ok:false, error:"Scan wallet first" });
+      return;
+    }
+
+     const recipient = prompt("Type in recipient:")
+    const amount = BigInt(Math.round(parseFloat(prompt("Type in amount:")) * 100000000));
+    if (!recipient || !amount) return;
+    showOutput({"tx":"processing..."})
+
+    if (!recipient) {
+      show({ ok:false, error:"Missing recipient" });
+      return;
+    }
+
+    let transferCoin = chooseTransferCoin(state.spendableCoins, amount);
+
+    if (!transferCoin) {
+      show({ ok:false, error:"No spendable coin large enough for amount" });
+      return;
+    }
+
+    show({
+      building:true,
+      stage:"building fee-less transfer",
+      transfer_leaf: transferCoin.leaf_position
+    });
+console.time("2 refresh transfer witness");
+    transferCoin = await refreshWitness(transferCoin);
+console.timeEnd("2 refresh transfer witness");
+
+console.time("3 fetch mint/burn zkbins");
+    const [mintZkbin, burnZkbin] = await Promise.all([
+      getBytes(`${BRIDGE}/api/zkas/money/mint`),
+      getBytes(`${BRIDGE}/api/zkas/money/burn`)
+    ]);
+console.timeEnd("3 fetch mint/burn zkbins");
+console.time("4 build fee-less WASM");
+    const feeLessRaw = build_transfer(
+      secret,
+      JSON.stringify(transferCoin),
+      recipient,
+      amount,
+      mintZkbin,
+      burnZkbin
+    );
+console.timeEnd("4 build fee-less WASM");
+    const feeLess = JSON.parse(feeLessRaw);
+
+    if (!feeLess.ok || !feeLess.tx_base64) {
+      show({
+        ...feeLess,
+        stage:"fee-less transfer build failed"
+      });
+      return;
+    }
+
+    localStorage.setItem(FEELESS_TX_KEY_NAME, feeLess.tx_base64);
+
+    show({
+      estimating_fee:true,
+      transfer_leaf: transferCoin.leaf_position,
+      fee_less_debug: feeLess.debug
+    });
+console.time("5 estimate fee");
+    const estimate = await postJson(`${BRIDGE}/api/estimate-fee`, {
+      tx_base64: feeLess.tx_base64
+    });
+console.timeEnd("5 estimate fee");
+    if (!estimate.ok || estimate.required_fee == null) {
+      show({
+        ...estimate,
+        stage: "fee estimate failed",
+        transfer_leaf: transferCoin.leaf_position,
+        fee_less_debug: feeLess.debug,
+        fee_less_tx_base64: feeLess.tx_base64
+      });
+      return;
+    }
+
+    const fee = BigInt(estimate.required_fee);
+    document.getElementById("fee").value = String(fee);
+
+    let feeCoin = chooseFeeCoin(state.spendableCoins, transferCoin, fee);
+    let transferCoinValue = BigInt(transferCoin.decrypt?.value || 0);
+    let useTransferChangeForFee = !feeCoin && transferCoinValue > amount + fee;
+
+    if (!feeCoin && !useTransferChangeForFee) {
+      show({
+        ok:false,
+        error:"No separate spendable fee coin large enough for estimated fee, and transfer coin has insufficient change to pay fee",
+        estimate
+      });
+      return;
+    }
+console.time("6 refresh fee witness");
+    feeCoin = useTransferChangeForFee
+      ? transferCoin
+      : await refreshWitness(feeCoin);
+console.timeEnd("6 refresh fee witness");
+    show({
+      building:true,
+      stage:"building transfer with fee",
+      transfer_leaf: transferCoin.leaf_position,
+      fee_leaf: feeCoin.leaf_position,
+      fee_source: useTransferChangeForFee ? "transfer_change_tx_local" : "separate_coin",
+      estimate
+    });
+console.time("7 fetch fee zkbin");
+    const feeZkbin = await getBytes(`${BRIDGE}/api/zkas/money/fee`);
+console.timeEnd("7 fetch fee zkbin");
+console.time("8 build with fee WASM");
+    const builtRaw = build_transfer_with_fee(
+      secret,
+      JSON.stringify(transferCoin),
+      JSON.stringify(feeCoin),
+      recipient,
+      amount,
+      fee,
+      mintZkbin,
+      burnZkbin,
+      feeZkbin
+    );
+console.timeEnd("8 build with fee WASM");
+    const built = JSON.parse(builtRaw);
+
+    if (built.ok && built.tx_base64) {
+      localStorage.setItem(BUILT_TX_KEY_NAME, built.tx_base64);
+    }
+
+    show({
+      ...built,
+      transfer_leaf: transferCoin.leaf_position,
+      fee_leaf: feeCoin.leaf_position
+    });
+console.time("9 broadcast");
+    await window.broadcastBuiltTx()
+    console.timeEnd("9 broadcast");
+  } catch (err) {
+    show({ ok:false, error:String(err) });
+  }
+};
+
+window.broadcastBuiltTx = async function () {
+  const txBase64 = localStorage.getItem(BUILT_TX_KEY_NAME);
+
+  if (!txBase64) {
+    show({ ok:false, error:"Build a transaction first" });
+    return;
+  }
+
+  const result = await postJson(`${BRIDGE}/api/broadcast`, {
+    tx_base64: txBase64
+  });
+
+  show(result);
+  if (result.ok) {
+  await postJson(`${BRIDGE}/api/index/sync`);
+  await scanWallet();
+}
+};
+
+window.loadSecret();
+</script>
+
+</body>
+</html>
