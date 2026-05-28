@@ -1,1 +1,1 @@
-npm start and open index_darkfi.html
+npm start and direct to index_darkfi.html
