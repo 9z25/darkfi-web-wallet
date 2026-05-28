@@ -304,10 +304,12 @@ const WALLET_SCAN_CURSOR = "darkfi_wallet_last_note_id";
 const BRIDGE = "http://192.168.1.49:8789";
 const SECRET_KEY_NAME = "darkfi_secret_key";
 const STATE_KEY_NAME = "darkfi_wallet_state";
+const STATE_VERSION = 2;
 const BUILT_TX_KEY_NAME = "darkfi_built_tx_base64";
 const FEELESS_TX_KEY_NAME = "darkfi_fee_less_tx_base64";
-const DEFAULT_DARKFI_FEE = 500000n;
+const DEFAULT_DARKFI_FEE = 1000000n;
 const FEE_CACHE_KEY = "darkfi_last_required_fee";
+const FEE_BUFFER = 250000n;
 const DARK_TOKEN_ID = "TokenId(0x267f9b7c64549bf080307d045bd0bd7ae4389093f6b2896114ec4e523a77a10f)";
 const zkbins = {
   mint: null,
@@ -442,6 +444,20 @@ async function getMoneyZkbin(name) {
   return zkbins[name];
 }
 
+function getCachedFee() {
+  const cached = BigInt(localStorage.getItem(FEE_CACHE_KEY) || "0");
+  return cached > DEFAULT_DARKFI_FEE ? cached : DEFAULT_DARKFI_FEE;
+}
+
+function cacheNextFee(nextFee) {
+  const fee = nextFee > DEFAULT_DARKFI_FEE ? nextFee : DEFAULT_DARKFI_FEE;
+
+  localStorage.setItem(FEE_CACHE_KEY, fee.toString());
+  document.getElementById("fee").value = fee.toString();
+
+  return fee;
+}
+
 function showTransferError(err, stage) {
   const payload = {
     ok: false,
@@ -459,7 +475,7 @@ function nextUiFrame() {
 
 function getTransferWorker() {
   if (!transferWorker) {
-    transferWorker = new Worker("./transfer-worker.js?v=2", { type: "module" });
+    transferWorker = new Worker("./transfer-worker.js?v=4", { type: "module" });
   }
 
   return transferWorker;
@@ -505,7 +521,12 @@ function runTransferWorker(task, payload) {
       worker.removeEventListener("message", onMessage);
       worker.removeEventListener("error", onError);
       resetTransferWorker();
-      reject(new Error(event.message || "Transfer worker error"));
+      reject(new Error([
+        event.message || "Transfer worker error",
+        event.filename ? `file=${event.filename}` : null,
+        event.lineno ? `line=${event.lineno}` : null,
+        event.colno ? `column=${event.colno}` : null
+      ].filter(Boolean).join(" ")));
     };
 
     worker.addEventListener("message", onMessage);
@@ -552,7 +573,17 @@ function loadState() {
     return null;
   }
 
-  return JSON.parse(raw);
+  const state = JSON.parse(raw);
+
+  if (state.version !== STATE_VERSION) {
+    localStorage.removeItem(STATE_KEY_NAME);
+    localStorage.removeItem(LAST_NOTE_ID_KEY);
+    localStorage.removeItem(BUILT_TX_KEY_NAME);
+    localStorage.removeItem(FEELESS_TX_KEY_NAME);
+    return null;
+  }
+
+  return state;
 }
 
 async function ensureFreshWalletState() {
@@ -696,6 +727,7 @@ window.scanWallet = async function () {
   }
 
   const oldState = loadState() || { ownedCoins: [] };
+  const resetScan = !oldState.ownedCoins?.length;
   const ownedById = new Map(
     (oldState.ownedCoins || [])
       .filter(coin => coin.id != null)
@@ -704,7 +736,9 @@ window.scanWallet = async function () {
   const ownedWithoutId = (oldState.ownedCoins || [])
     .filter(coin => coin.id == null);
 
-  const lastId = Number(localStorage.getItem(LAST_NOTE_ID_KEY) || 0);
+  const lastId = resetScan
+    ? 0
+    : Number(localStorage.getItem(LAST_NOTE_ID_KEY) || 0);
 
   console.time("scan fetch notes-since/nullifiers");
   const notesResult = await getJson(
@@ -791,6 +825,7 @@ window.scanWallet = async function () {
 
   const state = {
     ok: true,
+    version: STATE_VERSION,
     owned_count: ownedCoins.length,
     spendable_count: spendableCoins.length,
     spent_count: spentCoins.length,
@@ -803,7 +838,16 @@ window.scanWallet = async function () {
 
   localStorage.setItem(STATE_KEY_NAME, JSON.stringify(state));
 
-  //show(state);
+  show({
+    ok: true,
+    version: STATE_VERSION,
+    owned_count: ownedCoins.length,
+    spendable_count: spendableCoins.length,
+    spent_count: spentCoins.length,
+    new_notes: notesResult.notes?.length || 0,
+    last_note_id: maxId,
+    sample_nullifier: ownedCoins[0]?.decrypt?.nullifier || null
+  });
 
   const bal = Number(balances[DARK_TOKEN_ID] || 0);
   document.getElementById("qr-amount").textContent = (bal / 100000000).toFixed(8) + " DRK";
@@ -856,9 +900,7 @@ window.buildTransferWithFee = async function () {
       transfer_leaf: transferCoin.leaf_position
     });
 
-    const fee = BigInt(
-      localStorage.getItem(FEE_CACHE_KEY) || DEFAULT_DARKFI_FEE.toString()
-    );
+    const fee = getCachedFee();
 
     document.getElementById("fee").value = String(fee);
 
@@ -900,6 +942,10 @@ window.buildTransferWithFee = async function () {
       getMoneyZkbin("fee")
     ]);
     console.timeEnd("3 fetch cached zkbins");
+
+    console.time("3a worker wasm init");
+    await runTransferWorker("ping", {});
+    console.timeEnd("3a worker wasm init");
 
     console.time("4 build with fee WASM");
     const builtRaw = await runTransferWorkerWithHeartbeat(
@@ -964,11 +1010,57 @@ window.broadcastBuiltTx = async function () {
     tx_base64: txBase64
   });
 
-  show(result);
+  if (!result.ok) {
+    try {
+      console.time("broadcast failure fee estimate");
+      const estimate = await postJson(`${BRIDGE}/api/estimate-fee`, {
+        tx_base64: txBase64
+      });
+      console.timeEnd("broadcast failure fee estimate");
+
+      if (estimate.ok && estimate.required_fee != null) {
+        const nextFee = cacheNextFee(BigInt(estimate.required_fee) + FEE_BUFFER);
+
+        show({
+          ...result,
+          likely_reason: "cached/default fee was too low for this transaction",
+          estimate,
+          cached_next_fee: nextFee.toString(),
+          next_step: "Send again; the next build will use cached_next_fee"
+        });
+        return;
+      }
+
+      const fallbackFee = cacheNextFee(getCachedFee() * 2n);
+
+      show({
+        ...result,
+        likely_reason: "transaction simulation failed; cached/default fee may be too low or tx state is stale",
+        estimate,
+        cached_next_fee: fallbackFee.toString(),
+        next_step: "Send again; the next build will use cached_next_fee"
+      });
+      return;
+    } catch (err) {
+      const fallbackFee = cacheNextFee(getCachedFee() * 2n);
+
+      show({
+        ...result,
+        likely_reason: "transaction simulation failed; cached/default fee may be too low or tx state is stale",
+        fee_recovery_error: String(err),
+        cached_next_fee: fallbackFee.toString(),
+        next_step: "Send again; the next build will use cached_next_fee"
+      });
+      return;
+    }
+  }
+
+  
   if (result.ok) {
   await postJson(`${BRIDGE}/api/index/sync`);
   await scanWallet();
 }
+ show(result);
 };
 
 window.estimateLastBuiltFee = async function () {
@@ -986,8 +1078,9 @@ window.estimateLastBuiltFee = async function () {
   console.timeEnd("dev estimate last built fee");
 
   if (estimate.ok && estimate.required_fee != null) {
-    localStorage.setItem(FEE_CACHE_KEY, String(estimate.required_fee));
-    document.getElementById("fee").value = String(estimate.required_fee);
+    cacheNextFee(BigInt(estimate.required_fee) + FEE_BUFFER);
+  } else {
+    cacheNextFee(getCachedFee() * 2n);
   }
 
   show({

@@ -11,6 +11,8 @@ export function import_wallet(secret: string): any;
 
 export function new_money_tree_base64(): string;
 
+export function prewarm_money_proving_keys(mint_zkbin_bytes: Uint8Array, burn_zkbin_bytes: Uint8Array, fee_zkbin_bytes: Uint8Array): string;
+
 export function try_decrypt_raw_note(secret_key: string, encrypted_note_hex: string, coin_string: string): any;
 
 export function version(): string;
@@ -19,20 +21,19 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly build_transfer: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: number, j: number, k: number) => [number, number];
-    readonly build_transfer_with_fee: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: bigint, j: bigint, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number];
-    readonly create_wallet: () => any;
-    readonly import_wallet: (a: number, b: number) => any;
-    readonly new_money_tree_base64: () => [number, number];
-    readonly try_decrypt_raw_note: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-    readonly version: () => [number, number];
-    readonly __wbindgen_exn_store: (a: number) => void;
-    readonly __externref_table_alloc: () => number;
-    readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_start: () => void;
+    readonly build_transfer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: bigint, i: number, j: number, k: number, l: number) => void;
+    readonly build_transfer_with_fee: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: bigint, k: bigint, l: number, m: number, n: number, o: number, p: number, q: number) => void;
+    readonly create_wallet: () => number;
+    readonly import_wallet: (a: number, b: number) => number;
+    readonly new_money_tree_base64: (a: number) => void;
+    readonly prewarm_money_proving_keys: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly try_decrypt_raw_note: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly version: (a: number) => void;
+    readonly __wbindgen_export: (a: number) => void;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_export2: (a: number, b: number) => number;
+    readonly __wbindgen_export3: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_export4: (a: number, b: number, c: number) => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;
